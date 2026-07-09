@@ -144,34 +144,6 @@ if (nrf_irq_flag) {
 
 ---
 
-## Example: Spectrum monitoring (RPD)
-
-To scan 2.4 GHz band occupancy you don't need any address/pipe setup at all. The
-RPD register latches `1` when RF energy above **−64 dBm** is present on the active
-channel.
-
-```c
-nrf24_scanner_begin(&dev);            // scan-specific config (CRC off, EN_AA off)
-
-uint16_t hist[126] = {0};
-for (int rep = 0; rep < 100; rep++)
-    for (uint8_t ch = 0; ch < 126; ch++)
-        hist[ch] += nrf24_scan_channel(&dev, ch);
-
-// hist[ch] is 0..100 = per-channel "occupancy percent" over 1 MHz steps
-// map to bar height on the OLED for a spectrum/waterfall view
-```
-
-Channel frequency: `2400 + ch` MHz (2.400–2.525 GHz). WiFi (20 MHz wide) shows up
-as a broad hump around ch 2412/2437/2462; Bluetooth shows as a spike that hops
-around.
-
-> **Chip note:** the useful −64 dBm RPD threshold exists only on the **nRF24L01+**.
-> The older part (no "+") uses Carrier Detect with a much lower threshold and noisier
-> results. Check the chip marking.
-
----
-
 ## API summary
 
 ### Init & low-level
