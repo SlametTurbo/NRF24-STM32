@@ -1,9 +1,8 @@
 # nRF24L01(+) Driver for STM32 HAL
 
 Lightweight driver for the 2.4 GHz nRF24L01/nRF24L01+ radio module on top of the
-STM32 HAL. Supports normal TX/RX packet mode (auto-ack, multi-pipe, retransmit),
-interrupt-driven operation via the IRQ pin, plus dedicated **spectrum monitoring**
-helpers using the RPD (Received Power Detector) register.
+STM32 HAL. Supports normal TX/RX packet mode (auto-ack, multi-pipe, retransmit)
+and interrupt-driven operation via the IRQ pin.
 
 - **Target:** STM32F4xx (tested on STM32F405RGT6)
 - **Bus:** SPI mode 0 (CPOL=0, CPHA=0), 8-bit, MSB first, SCK max 10 MHz
@@ -26,7 +25,7 @@ Copy both into your project (e.g. `Core/Src` and `Core/Inc`, or a dedicated
 
 | nRF24 | STM32F405 | Notes |
 |-------|-----------|-------|
-| VCC   | 3.3V      | |
+| VCC   | 3.3V      | **Not 5V.** A 10 µF cap next to the module is mandatory |
 | GND   | GND       | |
 | CE    | GPIO out  | e.g. PB0 |
 | CSN   | GPIO out  | e.g. PB1 |
@@ -183,18 +182,9 @@ if (nrf_irq_flag) {
 | Function | Notes |
 |----------|-------|
 | `nrf24_get_status / get_fifo_status` | |
-| `nrf24_get_rpd(dev)` | 1 if RF > −64 dBm on the active channel |
 | `nrf24_flush_tx / flush_rx` | |
 | `nrf24_clear_irq(dev)` | Clear RX_DR \| TX_DS \| MAX_RT |
 | `nrf24_set_irq_mask(dev, rx_dr, tx_ds, max_rt)` | `true` = interrupt enabled |
-
-### Spectrum & carrier
-| Function | Notes |
-|----------|-------|
-| `nrf24_scanner_begin(dev)` | Configure RPD scan mode |
-| `nrf24_scan_channel(dev, ch)` | Probe one channel, returns 0/1 |
-| `nrf24_carrier_start(dev, ch, pwr)` | Continuous carrier output (TX test) |
-| `nrf24_carrier_stop(dev)` | |
 
 ---
 
@@ -206,7 +196,6 @@ if (nrf_irq_flag) {
 | TX always MAX_RT | RX addr ≠ TX addr, pipe 0 RX addr not set to TX addr, mismatched channel/data rate |
 | IRQ fires once then goes silent | Forgot `nrf24_clear_irq()` |
 | RX never receives data | Pipe not enabled, mismatched payload size, mismatched CRC across nodes |
-| RPD scan always 0 | Non-plus chip (no useful RPD), or dwell too short |
 | Corrupt data at close range | 0 dBm too hot for a nearby RX — lower power or add distance |
 
 ---
