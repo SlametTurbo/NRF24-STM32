@@ -1,263 +1,244 @@
-# nRF24L01+ STM32 HAL Driver
+# nRF24L01(+) Driver for STM32 HAL
 
-A lightweight, self-contained nRF24L01(+) driver for STM32 using the STM32 HAL library.
+Lightweight driver for the 2.4 GHz nRF24L01/nRF24L01+ radio module on top of the
+STM32 HAL. Supports normal TX/RX packet mode (auto-ack, multi-pipe, retransmit),
+interrupt-driven operation via the IRQ pin, plus dedicated **spectrum monitoring**
+helpers using the RPD (Received Power Detector) register.
 
-The library provides a simple API for configuring the radio, transmitting and receiving packets, channel scanning, and generating a continuous carrier for RF testing.
-
-## Features
-
-- STM32 HAL compatible
-- No timer required (uses DWT cycle counter for microsecond delays)
-- Simple SPI abstraction
-- TX and RX mode support
-- Configurable:
-  - RF Channel
-  - Data Rate
-  - Output Power
-  - CRC
-  - Auto Retransmission
-  - Address Width
-  - Payload Size
-- Multi-pipe receive support (Pipe 0–5)
-- FIFO management
-- IRQ handling
-- Spectrum scanner (RPD)
-- Continuous carrier mode for RF testing
+- **Target:** STM32F4xx (tested on STM32F405RGT6)
+- **Bus:** SPI mode 0 (CPOL=0, CPHA=0), 8-bit, MSB first, SCK max 10 MHz
+- **Dependencies:** STM32 HAL only. Microsecond delays use the DWT cycle counter
+  (no separate TIMER required).
 
 ---
 
-## Requirements
+## Files
 
-- STM32 HAL
-- SPI peripheral
-- GPIO pins for:
-  - CE
-  - CSN
-- Cortex-M3/M4/M7 (DWT cycle counter required)
+- `nrf24.h` — register map, commands, enums, and the API prototypes
+- `nrf24.c` — implementation
 
----
-
-## File Structure
-
-```
-nrf24.c
-nrf24.h
-```
+Copy both into your project (e.g. `Core/Src` and `Core/Inc`, or a dedicated
+`Drivers/nrf24/` folder added to your include path).
 
 ---
 
-## Hardware Connection
+## Wiring
 
-| nRF24L01 | STM32 |
-|----------|--------|
-| VCC | 3.3V |
-| GND | GND |
-| CE | GPIO Output |
-| CSN | GPIO Output |
-| SCK | SPI SCK |
-| MOSI | SPI MOSI |
-| MISO | SPI MISO |
-| IRQ | Optional GPIO Input |
+| nRF24 | STM32F405 | Notes |
+|-------|-----------|-------|
+| VCC   | 3.3V      | **Not 5V.** A 10 µF cap next to the module is mandatory |
+| GND   | GND       | |
+| CE    | GPIO out  | e.g. PB0 |
+| CSN   | GPIO out  | e.g. PB1 |
+| SCK   | SPI1_SCK  | PA5 |
+| MOSI  | SPI1_MOSI | PA7 |
+| MISO  | SPI1_MISO | PA6 |
+| IRQ   | GPIO EXTI | optional — interrupt mode only |
 
-> **Note:** The nRF24L01 is **NOT 5V tolerant**.
+Missing 10 µF decoupling is the number-one cause of a module that "won't respond".
+Don't skip it.
+
+### CubeMX pin setup
+
+- **CSN, CE:** GPIO_Output, push-pull, no pull, low speed.
+  Initial level: CSN = High, CE = Low (optional; the library sets these itself in init).
+- **SPI:** mode 0, 8-bit, MSB first. Set the prescaler so SCK < 10 MHz.
+  On the F405 with APB2 = 84 MHz → prescaler 16 = 5.25 MHz (safe).
+- **IRQ (optional):** GPIO_EXTI, **Falling edge** trigger, Pull-up.
+  Enable the EXTI line in the NVIC tab.
 
 ---
 
-## Initialization
+## Quick start
 
 ```c
-nrf24_t radio;
+#include "nrf24.h"
 
-if (!nrf24_init(
-        &radio,
-        &hspi1,
-        CE_GPIO_Port,
-        CE_Pin,
-        CSN_GPIO_Port,
-        CSN_Pin))
-{
-    Error_Handler();
-}
-```
+nrf24_t dev;
 
----
-
-## Basic Configuration
-
-```c
-uint8_t addr[5] = {'N','O','D','E','1'};
-
-nrf24_set_channel(&radio, 76);
-nrf24_set_data_rate(&radio, NRF24_DR_1MBPS);
-nrf24_set_power(&radio, NRF24_PWR_0DBM);
-
-nrf24_set_tx_address(&radio, addr);
-nrf24_set_rx_address(&radio, 0, addr);
-
-nrf24_enable_pipe(&radio, 0, true);
-
-nrf24_set_payload_size(&radio, 0, 32);
-```
-
----
-
-## Transmitting
-
-```c
-uint8_t message[] = "Hello";
-
-nrf24_tx_mode(&radio);
-
-if (nrf24_transmit(&radio, message, sizeof(message)))
-{
-    // Transmission successful
-}
-else
-{
-    // Transmission failed
-}
-```
-
----
-
-## Receiving
-
-```c
-uint8_t buffer[32];
-uint8_t pipe;
-
-nrf24_rx_mode(&radio);
-
-if (nrf24_receive(&radio, buffer, sizeof(buffer), &pipe))
-{
-    // Data received
-}
-```
-
----
-
-## Scanner Mode
-
-The library can perform a simple spectrum scan using the RPD (Received Power Detector).
-
-```c
-nrf24_scanner_begin(&radio);
-
-for (uint8_t ch = 0; ch <= 125; ch++)
-{
-    uint8_t busy = nrf24_scan_channel(&radio, ch);
-
-    if (busy)
-    {
-        // RF activity detected
+void setup(void) {
+    if (!nrf24_init(&dev, &hspi1,
+                    NRF_CE_GPIO_Port,  NRF_CE_Pin,
+                    NRF_CSN_GPIO_Port, NRF_CSN_Pin)) {
+        // module not responding — check wiring, decoupling, and SPI mode
     }
 }
 ```
 
----
+`nrf24_init()` returns a `bool`: it reads back the `RF_CH` register after writing
+it, so this doubles as an **SPI link check**. If it returns `false`, the usual
+culprits are swapped CSN/SCK or insufficient decoupling.
 
-## Continuous Carrier
-
-Useful for RF testing.
-
-Start carrier:
-
-```c
-nrf24_carrier_start(&radio, 76, NRF24_PWR_0DBM);
-```
-
-Stop carrier:
-
-```c
-nrf24_carrier_stop(&radio);
-```
+Defaults after init: 2-byte CRC, 5-byte address width, 32-byte payload,
+auto-ack off, channel 76, 1 Mbps, 0 dBm, powered up.
 
 ---
 
-## API Overview
-
-### Initialization
+## Example: Transmitter
 
 ```c
-nrf24_init()
+uint8_t addr[5] = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7};
+
+nrf24_set_channel(&dev, 76);
+nrf24_set_data_rate(&dev, NRF24_DR_1MBPS);
+nrf24_set_power(&dev, NRF24_PWR_0DBM);
+nrf24_set_tx_address(&dev, addr);
+nrf24_set_rx_address(&dev, 0, addr);   // pipe 0 must match TX addr for auto-ack
+nrf24_set_auto_ack(&dev, 0, true);
+nrf24_set_retries(&dev, 5, 15);        // 1500 us, 15 retries
+nrf24_tx_mode(&dev);
+
+uint8_t payload[32] = "hello";
+if (nrf24_transmit(&dev, payload, sizeof(payload))) {
+    // TX_DS: sent (and acked, if auto-ack is on)
+} else {
+    // MAX_RT / timeout: failed
+}
 ```
+
+## Example: Receiver (polling)
+
+```c
+uint8_t addr[5] = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7};
+
+nrf24_set_channel(&dev, 76);
+nrf24_set_rx_address(&dev, 1, addr);
+nrf24_enable_pipe(&dev, 1, true);
+nrf24_set_auto_ack(&dev, 1, true);
+nrf24_set_payload_size(&dev, 1, 32);
+nrf24_rx_mode(&dev);
+
+// loop:
+uint8_t buf[32], pipe;
+if (nrf24_receive(&dev, buf, 32, &pipe)) {
+    // buf[] holds data from `pipe`
+}
+```
+
+## Example: Receiver (interrupt)
+
+```c
+volatile bool nrf_irq_flag = false;
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    if (GPIO_Pin == NRF_IRQ_Pin) nrf_irq_flag = true;
+}
+
+// after init:
+nrf24_set_irq_mask(&dev, true, false, false);  // only RX_DR asserts IRQ
+nrf24_rx_mode(&dev);
+
+// main loop:
+if (nrf_irq_flag) {
+    nrf_irq_flag = false;
+    uint8_t buf[32], pipe;
+    while (nrf24_receive(&dev, buf, 32, &pipe)) {
+        // process buf[] — the loop drains all FIFO levels (max 3)
+    }
+    nrf24_clear_irq(&dev);   // REQUIRED: release the IRQ pin so EXTI can fire again
+}
+```
+
+> **Classic gotcha:** the nRF24 IRQ pin stays held LOW until the STATUS flags are
+> cleared. If you forget `nrf24_clear_irq()`, EXTI fires once and then goes silent.
+
+---
+
+## Example: Spectrum monitoring (RPD)
+
+To scan 2.4 GHz band occupancy you don't need any address/pipe setup at all. The
+RPD register latches `1` when RF energy above **−64 dBm** is present on the active
+channel.
+
+```c
+nrf24_scanner_begin(&dev);            // scan-specific config (CRC off, EN_AA off)
+
+uint16_t hist[126] = {0};
+for (int rep = 0; rep < 100; rep++)
+    for (uint8_t ch = 0; ch < 126; ch++)
+        hist[ch] += nrf24_scan_channel(&dev, ch);
+
+// hist[ch] is 0..100 = per-channel "occupancy percent" over 1 MHz steps
+// map to bar height on the OLED for a spectrum/waterfall view
+```
+
+Channel frequency: `2400 + ch` MHz (2.400–2.525 GHz). WiFi (20 MHz wide) shows up
+as a broad hump around ch 2412/2437/2462; Bluetooth shows as a spike that hops
+around.
+
+> **Chip note:** the useful −64 dBm RPD threshold exists only on the **nRF24L01+**.
+> The older part (no "+") uses Carrier Detect with a much lower threshold and noisier
+> results. Check the chip marking.
+
+---
+
+## API summary
+
+### Init & low-level
+| Function | Notes |
+|----------|-------|
+| `nrf24_init(dev, hspi, ce_port, ce_pin, csn_port, csn_pin)` | Init + SPI check. Returns `bool` |
+| `nrf24_read_reg / write_reg` | Single-byte register access |
+| `nrf24_read_reg_buf / write_reg_buf` | Multi-byte register access (addresses) |
+| `nrf24_send_cmd(dev, cmd)` | Send 1-byte command, returns STATUS |
 
 ### Configuration
+| Function | Notes |
+|----------|-------|
+| `nrf24_set_channel(dev, ch)` | Channel 0..125 |
+| `nrf24_set_data_rate(dev, dr)` | `NRF24_DR_1MBPS / 2MBPS / 250KBPS` |
+| `nrf24_set_power(dev, pwr)` | `NRF24_PWR_M18DBM / M12DBM / M6DBM / 0DBM` |
+| `nrf24_set_crc(dev, crc)` | `NRF24_CRC_DISABLE / 1BYTE / 2BYTE` |
+| `nrf24_set_address_width(dev, aw)` | `NRF24_AW_3BYTES / 4BYTES / 5BYTES` |
+| `nrf24_set_retries(dev, delay, count)` | delay 0..15 (×250 µs), count 0..15 |
+| `nrf24_set_payload_size(dev, pipe, size)` | Fixed payload 0..32 |
+| `nrf24_set_tx_address(dev, addr)` | |
+| `nrf24_set_rx_address(dev, pipe, addr)` | pipe 0-1 full width, 2-5 LSB only |
+| `nrf24_enable_pipe(dev, pipe, en)` | |
+| `nrf24_set_auto_ack(dev, pipe, en)` | |
 
-```c
-nrf24_set_channel()
-nrf24_set_data_rate()
-nrf24_set_power()
-nrf24_set_crc()
-nrf24_set_address_width()
-nrf24_set_retries()
-nrf24_set_payload_size()
-nrf24_set_tx_address()
-nrf24_set_rx_address()
-nrf24_enable_pipe()
-nrf24_set_auto_ack()
-```
+### Mode & data
+| Function | Notes |
+|----------|-------|
+| `nrf24_power_up / power_down` | |
+| `nrf24_rx_mode / tx_mode` | |
+| `nrf24_transmit(dev, data, len)` | Blocking, returns `true` on TX_DS |
+| `nrf24_available(dev, &pipe)` | Data waiting in RX FIFO? |
+| `nrf24_read_payload(dev, buf, len)` | |
+| `nrf24_receive(dev, buf, len, &pipe)` | Non-blocking, IRQ-safe |
 
-### Radio Modes
+### Status & IRQ
+| Function | Notes |
+|----------|-------|
+| `nrf24_get_status / get_fifo_status` | |
+| `nrf24_get_rpd(dev)` | 1 if RF > −64 dBm on the active channel |
+| `nrf24_flush_tx / flush_rx` | |
+| `nrf24_clear_irq(dev)` | Clear RX_DR \| TX_DS \| MAX_RT |
+| `nrf24_set_irq_mask(dev, rx_dr, tx_ds, max_rt)` | `true` = interrupt enabled |
 
-```c
-nrf24_power_up()
-nrf24_power_down()
-nrf24_tx_mode()
-nrf24_rx_mode()
-```
-
-### Data Transfer
-
-```c
-nrf24_transmit()
-nrf24_receive()
-nrf24_available()
-nrf24_read_payload()
-```
-
-### Status
-
-```c
-nrf24_get_status()
-nrf24_get_fifo_status()
-nrf24_clear_irq()
-nrf24_flush_tx()
-nrf24_flush_rx()
-```
-
-### RF Test
-
-```c
-nrf24_scanner_begin()
-nrf24_scan_channel()
-nrf24_carrier_start()
-nrf24_carrier_stop()
-```
+### Spectrum & carrier
+| Function | Notes |
+|----------|-------|
+| `nrf24_scanner_begin(dev)` | Configure RPD scan mode |
+| `nrf24_scan_channel(dev, ch)` | Probe one channel, returns 0/1 |
+| `nrf24_carrier_start(dev, ch, pwr)` | Continuous carrier output (TX test) |
+| `nrf24_carrier_stop(dev)` | |
 
 ---
 
-## Default Configuration
+## Troubleshooting
 
-The driver initializes the radio with the following defaults:
-
-| Parameter | Value |
-|-----------|-------|
-| Channel | 76 |
-| Address Width | 5 bytes |
-| Payload Size | 32 bytes |
-| Data Rate | 1 Mbps |
-| TX Power | 0 dBm |
-| CRC | 2 Bytes |
-| Auto ACK | Disabled |
-| Dynamic Payload | Disabled |
+| Symptom | Likely cause |
+|---------|--------------|
+| `nrf24_init()` returns `false` | Swapped CSN/SCK, SPI not in mode 0, poor decoupling |
+| TX always MAX_RT | RX addr ≠ TX addr, pipe 0 RX addr not set to TX addr, mismatched channel/data rate |
+| IRQ fires once then goes silent | Forgot `nrf24_clear_irq()` |
+| RX never receives data | Pipe not enabled, mismatched payload size, mismatched CRC across nodes |
+| RPD scan always 0 | Non-plus chip (no useful RPD), or dwell too short |
+| Corrupt data at close range | 0 dBm too hot for a nearby RX — lower power or add distance |
 
 ---
 
-## Notes
+## License
 
-- Maximum payload size is **32 bytes**.
-- Supports receive pipes **0–5**.
-- Microsecond delays are generated using the Cortex-M DWT cycle counter.
-- Auto-ACK is disabled by default during initialization.
-- IRQ flags are cleared automatically after transmit and receive operations.
+Free to use and modify for your own projects.
