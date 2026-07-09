@@ -26,7 +26,7 @@ Copy both into your project (e.g. `Core/Src` and `Core/Inc`, or a dedicated
 
 | nRF24 | STM32F405 | Notes |
 |-------|-----------|-------|
-| VCC   | 3.3V      | **Not 5V.** A 10 µF cap next to the module is mandatory |
+| VCC   | 3.3V      | |
 | GND   | GND       | |
 | CE    | GPIO out  | e.g. PB0 |
 | CSN   | GPIO out  | e.g. PB1 |
